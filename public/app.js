@@ -135,13 +135,14 @@ function captureAutoTitle(title, videoId){
   const c = getCourse(S.course); if (!c) return;
   const r = rawLesson(c, S.lesson); if (!r) return;
   const lesson = r.lesson;
+  const src = r.src;
   let changed = false;
 
   if (lesson.auto && title){
     const clean = String(title).trim();
     if (clean){ lesson.title = clean; lesson.auto = false; changed = true; }
   }
-  if (videoId && !lesson.url){
+  if (src && src.type !== 'playlist' && videoId && !lesson.url){
     lesson.url = 'https://www.youtube.com/watch?v=' + videoId;
     changed = true;
   }
@@ -168,22 +169,34 @@ function ytHandshake(){
    which holds the real ANTHROPIC_API_KEY and calls the Claude API.
    SAMPLE stays a plain boolean here: every other place in this file that
    checks `if (SAMPLE)` or `SAMPLE ? ... : ...` keeps working unchanged. */
-const API_BASE = (window.ADAPTPRACTICE_API_BASE || '').replace(/\/$/, ''); // same-origin by default
+const API_BASE = (window.ADAPTPRACTICE_API_BASE || window.location.origin || '').replace(/\/$/, '');
 let SAMPLE = false, aiChecked = false, booted = false;
 (async () => {
   try {
-    const res = await fetch(API_BASE + '/api/health');
+    const res = await fetch((API_BASE || window.location.origin) + '/api/health');
     SAMPLE = res.ok && (await res.json()).ok === true;
   } catch (e) { SAMPLE = false; }
   aiChecked = true;
   if (booted) render();
 })();
+async function fetchPlaylistItems(url){
+  const listUrl = encodeURIComponent(String(url || '').trim());
+  if (!listUrl) throw new Error('No playlist URL supplied.');
+  const res = await fetch(API_BASE + '/api/playlist?url=' + listUrl);
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({}));
+    throw new Error(data.error || 'Could not load the playlist.');
+  }
+  const data = await res.json();
+  return Array.isArray(data.items) ? data.items : [];
+}
+
 const AI_COPY = {
-  not_granted:'The AI backend is not reachable. Check that the server is running and ANTHROPIC_API_KEY is set.',
-  sampling_disabled:'Claude is not available on this account.',
-  not_declared:'This page no longer has Claude access.',
-  capability_disabled:'Claude is unavailable in this view.',
-  capability_removed:'Claude is unavailable in this view.',
+  not_granted:'The AI backend is not reachable. Check that the local server is running and the Ollama model is available.',
+  sampling_disabled:'AI is not available on this account.',
+  not_declared:'This page no longer has AI access.',
+  capability_disabled:'AI is unavailable in this view.',
+  capability_removed:'AI is unavailable in this view.',
   rate_limited:'Too many AI requests. Wait a minute and try again.',
   credits_exhausted:'Your Anthropic API account has no available credit. Add credit in Anthropic Console → Plans & Billing, then retry.',
   invalid_api_key:'The Anthropic API key was rejected. Check ANTHROPIC_API_KEY and restart the server.',
@@ -379,6 +392,7 @@ function rail(){
   const item = (v,g,label,count) =>
     '<button class="nav" data-act="go" data-view="'+v+'" aria-current="'+(S.view===v)+'"><span class="g">'+g+'</span>'+label+
     (count ? '<span class="ct">'+count+'</span>' : '') + '</button>';
+  const statusText = aiChecked ? (SAMPLE ? 'AI live' : 'AI offline') : 'Checking AI';
   return '<nav class="rail">'
     + '<div class="brand" data-act="go" data-view="dash"><b>AdaptPractice</b><i>BETA</i></div>'
     + item('dash','◇','Dashboard')
@@ -394,7 +408,7 @@ function rail(){
     + '<div class="railsep"></div>'
     + item('shield','⛨','Focus shield')
     + item('profile','◉','Profile')
-    + '<div class="railfoot">' + (aiChecked ? (SAMPLE ? 'Claude is connected. AI features are live.' : 'Claude is unavailable in this view — AI features are hidden.') : 'Checking Claude…') + '</div>'
+    + '<div class="railfoot"><span class="live-pill"><span class="live-dot"></span>' + statusText + '</span><br>' + (aiChecked ? (SAMPLE ? 'AI backend is connected. AI features are live.' : 'AI is unavailable in this view — AI features are hidden.') : 'Checking AI…') + '</div>'
     + '</nav>';
 }
 
@@ -403,7 +417,7 @@ function vLanding(){
   return '<div class="land"><div class="landwrap">'
   + '<header class="landnav"><div class="brand" style="padding:0"><b style="color:#fff">AdaptPractice</b><i>BETA</i></div>'
   + '<button class="btn" style="background:#fff;color:#111B2E;border-color:#fff" data-act="start">Create your profile</button></header>'
-  + '<section class="hero"><h1>You came to study. The feed had other plans.</h1>'
+  + '<section class="hero"><div class="live-badge"><span class="live-dot"></span>Live learning loop</div><h1>You came to study. The feed had other plans.</h1>'
   + '<p class="lede">Bring the playlist or the PDF you were going to learn from anyway. AdaptPractice wraps it in a workspace that asks you questions, remembers exactly where you went wrong, and builds the next set of questions out of those mistakes.</p>'
   + '<div class="loops">'
   + '<div class="loop bad"><h4>How the evening usually goes</h4><ol>'
@@ -580,7 +594,7 @@ function vWizard(){
     inner = '<h2>Bring your material</h2>'
       + '<div class="row" style="gap:8px;margin-bottom:16px">'+tab('playlist','YouTube playlist')+tab('video','Single video')+tab('pdf','PDF')+'</div>'
       + src
-      + (SAMPLE ? '' : '<div class="note bad">Claude is not available in this view, so the course map and questions cannot be generated. You can still create the course and add material.</div>')
+      + (SAMPLE ? '' : '<div class="note bad">AI is not available in this view, so the course map and questions cannot be generated. You can still create the course and add material.</div>')
       + '<div class="row"><button class="btn sec" data-act="w-back">Back</button><button class="btn go" data-act="w-build"'+(S.busy?' disabled':'')+'>'+(S.busy ? '<span class="spin"></span> '+esc(S.busy) : 'Build the course')+'</button></div>';
   }
   return '<div style="max-width:660px">'
@@ -686,12 +700,14 @@ function vLesson(){
   const list = allLessons(c);
   const i = list.findIndex(l => l.id === lesson.id);
   const prev = list[i-1], next = list[i+1];
-  const vid = ytVideoId(lesson.url) || (src.type !== 'playlist' ? ytVideoId(src.url) : null);
+  const isPlaylistLesson = src.type === 'playlist';
+  const vid = isPlaylistLesson ? null : (ytVideoId(lesson.url) || ytVideoId(src.url));
   const listId = src.listId || ytListId(src.url);
+  const selectedIndex = Number.isInteger(lesson.index) && lesson.index > 0 ? lesson.index : 1;
   const a = (c.assignments||[]).find(x => x.id === S.work);
 
   let embedSrc = null;
-  const common = 'rel=0&modestbranding=1&enablejsapi=1&origin=' + encodeURIComponent(location.origin) + (lesson.at ? '&start='+Math.floor(lesson.at) : '');
+  const common = 'rel=0&modestbranding=1&enablejsapi=1&origin=' + encodeURIComponent(location.origin) + (lesson.at ? '&start='+Math.floor(lesson.at) : '') + '&autoplay=1&mute=1&playsinline=1';
   const embedBase = 'https://www.youtube.com/embed';
   if (vid) embedSrc = embedBase + '/' + vid + '?' + common;
   else if (src.type === 'playlist' && listId) embedSrc = embedBase + '/videoseries?list=' + encodeURIComponent(listId) + '&index=' + (lesson.index||1) + '&' + common;
@@ -701,9 +717,9 @@ function vLesson(){
   else if (src.type === 'playlist' && listId) watchUrl = 'https://www.youtube.com/playlist?list=' + encodeURIComponent(listId);
 
   let stage;
-  if ((vid || (src.type === 'playlist' && listId)) && false){
-    stage = '<div class="stage"><iframe id="ytframe" allow="autoplay; encrypted-media; picture-in-picture" allowfullscreen referrerpolicy="strict-origin-when-cross-origin" src="'+esc(embedSrc)+'" onerror="this.style.display=\'none\'; var note=this.parentNode.parentNode.querySelector(\'#playnote\'); if(note){ note.classList.add(\'error\'); var txt=note.querySelector(\'span\'); if(txt){ txt.textContent=\'This video cannot be embedded in the current browser or network. Open it on YouTube instead.\'; } }"></iframe></div>'
-      + '<div class="playnote" id="playnote"><span>Blank player or a connection error? Some preview frames and networks block embedded video.</span>'
+  if (vid || (src.type === 'playlist' && listId)){
+    stage = '<div class="stage"><iframe id="ytframe" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" allowfullscreen referrerpolicy="strict-origin-when-cross-origin" loading="lazy" src="'+esc(embedSrc)+'" onerror="this.style.display=\'none\'; var note=this.parentNode.parentNode.querySelector(\'#playnote\'); if(note){ note.classList.add(\'error\'); var txt=note.querySelector(\'span\'); if(txt){ txt.textContent=\'This video cannot be embedded in the current browser or network. Open it on YouTube instead.\'; } }"></iframe></div>'
+      + '<div class="playnote" id="playnote"><span>Embedded video is live. If it does not appear, the network is blocking the player.</span>'
       + '<a href="'+esc(watchUrl)+'" target="_blank" rel="noopener">Open lesson ' + (lesson.index||1) + ' on YouTube</a>'
       + '<span class="dim">Practice, the timestamp box and everything else on this page keep working.</span></div>';
   } else if (vid || (src.type === 'playlist' && listId)){
@@ -790,7 +806,7 @@ function vWork(){
     + '</div></div>';
   if (S.busy === 'assign') return h + '<div class="sheet pad"><div class="think"><span class="spin"></span> Building your next assignment from what you got wrong last time…</div></div>';
   if (!a) return h + '<div class="sheet empty"><h3>No assignment yet</h3><p class="muted" style="max-width:46ch;margin:0 auto 14px">The first set is drawn from your material. Every set after that is drawn from your mistakes in the one before it.</p>'
-    + (SAMPLE ? '<button class="btn go" data-act="new-assign" data-c="'+c.id+'">Generate an assignment</button>' : '<div class="note bad">Claude is unavailable in this view.</div>') + '</div>';
+    + (SAMPLE ? '<button class="btn go" data-act="new-assign" data-c="'+c.id+'">Generate an assignment</button>' : '<div class="note bad">AI is unavailable in this view.</div>') + '</div>';
   return h + assignmentHtml(c, a, false)
     + (a.submitted ? '<div class="row" style="margin-top:16px"><button class="btn go" data-act="new-assign" data-c="'+c.id+'">Next assignment</button><span class="dim">Written from what just happened.</span></div>' : '');
 }
@@ -1550,6 +1566,18 @@ async function buildFromWizard(){
   const w = S.wizard; grabSource();
   if (w.srcType !== 'pdf' && !w.url && !w.titles && !w.text){ toast('Add a link, some titles, or the text.'); return; }
   if (w.srcType === 'pdf' && !w.text){ toast('Load a PDF or paste its text.'); return; }
+
+  if (w.srcType === 'playlist' && w.url && !w.titles) {
+    try {
+      const items = await fetchPlaylistItems(w.url);
+      if (items.length){
+        w.titles = items.map(item => item.title).filter(Boolean).join('\n');
+      }
+    } catch (e) {
+      console.warn('Playlist title import failed:', e && e.message ? e.message : e);
+    }
+  }
+
   if (!SAMPLE){
     const titles = (w.titles||'').split('\n').map(s=>s.trim()).filter(Boolean);
     let lessons;

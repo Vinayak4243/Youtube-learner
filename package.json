@@ -6,8 +6,9 @@
   "type": "commonjs",
   "main": "server/server.js",
   "scripts": {
-    "start": "node server/server.js",
-    "dev": "node --watch server/server.js"
+    "start": "USE_OLLAMA=true OLLAMA_MODEL=${OLLAMA_MODEL:-qwen2.5:3b} node server/server.js",
+    "start:claude": "ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY} CLAUDE_MODEL=${CLAUDE_MODEL:-claude-sonnet-5} node server/server.js",
+    "dev": "USE_OLLAMA=true OLLAMA_MODEL=${OLLAMA_MODEL:-qwen2.5:3b} node --watch server/server.js"
   },
   "engines": {
     "node": ">=18"
