@@ -49,11 +49,34 @@ app.use('/api/', rateLimit({
 
 app.use(express.static(path.join(__dirname, '..', 'public')));
 
-function bad(res, code, message) { return res.status(code).json({ error: message }); }
+function bad(res, status, message, code) {
+  return res.status(status).json({ error: message, ...(code ? { code } : {}) });
+}
+
+// The Anthropic SDK puts useful provider detail in the error message, but
+// forwarding that whole message produces a scary raw JSON blob in the UI.
+// Turn the common actionable cases into stable, client-safe error codes.
+function aiFailure(err) {
+  const message = String((err && err.message) || '');
+  if (/credit balance is too low|purchase credits|plans?\s*&?\s*billing/i.test(message)) {
+    return { status: 402, code: 'credits_exhausted', message: 'Your Anthropic API account has no available credit. Add credit in Anthropic Console → Plans & Billing, then try again.' };
+  }
+  if (/authentication_error|invalid.*api key|api[_ ]key/i.test(message)) {
+    return { status: 401, code: 'invalid_api_key', message: 'The Anthropic API key was rejected. Check ANTHROPIC_API_KEY and restart the server.' };
+  }
+  if (/not_found_error|model.*not found|unknown model/i.test(message)) {
+    return { status: 400, code: 'invalid_model', message: 'The configured Claude model is unavailable. Set CLAUDE_MODEL to an active Anthropic model and restart the server.' };
+  }
+  if (/overloaded_error|overloaded/i.test(message)) {
+    return { status: 529, code: 'provider_overloaded', message: 'Anthropic is temporarily overloaded. Please retry in a moment.' };
+  }
+  return { status: 502, code: 'upstream_error', message: 'The AI provider could not complete the request. Please try again.' };
+}
 function asyncRoute(fn) {
   return (req, res) => fn(req, res).catch(err => {
     console.error(err);
-    bad(res, 502, (err && err.message) || 'The AI request failed.');
+    const failure = aiFailure(err);
+    bad(res, failure.status, failure.message, failure.code);
   });
 }
 function readPrompt(req, res) {
