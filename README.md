@@ -119,14 +119,6 @@ shows a plain note instead of failing silently.
   frontend and backend end up on different domains.
 - **Model**: set via `CLAUDE_MODEL` in `.env` (defaults to `claude-sonnet-5`).
 
-## Troubleshooting AI failures
-
-The API key can be valid while the API account has no remaining prepaid credit.
-In that case the app now shows an explicit billing message. Add credit or upgrade
-the account in Anthropic Console → Plans & Billing, then restart the server and
-retry. The key must be an **Anthropic API** key; a Claude web-app subscription
-does not by itself include API credit.
-
 ## 6. Editing the app
 
 Everything is in three files. Some starting points:
