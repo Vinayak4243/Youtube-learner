@@ -185,6 +185,10 @@ const AI_COPY = {
   capability_disabled:'Claude is unavailable in this view.',
   capability_removed:'Claude is unavailable in this view.',
   rate_limited:'Too many AI requests. Wait a minute and try again.',
+  credits_exhausted:'Your Anthropic API account has no available credit. Add credit in Anthropic Console → Plans & Billing, then retry.',
+  invalid_api_key:'The Anthropic API key was rejected. Check ANTHROPIC_API_KEY and restart the server.',
+  invalid_model:'The configured Claude model is unavailable. Update CLAUDE_MODEL and restart the server.',
+  provider_overloaded:'Anthropic is temporarily overloaded. Please retry in a moment.',
   session_expired:'Sign in to Claude again, then retry.',
   refused:'Claude declined this request. Try rephrasing your source or question.',
   empty_completion:'Claude returned nothing. Ask for a smaller piece at a time.',
@@ -241,7 +245,7 @@ async function askJson(input, opts){
 }
 async function backendError(res){
   let code = 'upstream_error', message = 'Request failed (' + res.status + ')';
-  try { const j = await res.json(); if (j && j.error) message = j.error; if (res.status === 429) code = 'rate_limited'; if (res.status === 413) code = 'prompt_too_large'; }
+  try { const j = await res.json(); if (j && j.error) message = j.error; if (j && j.code) code = j.code; if (res.status === 429) code = 'rate_limited'; if (res.status === 413) code = 'prompt_too_large'; }
   catch(e) {}
   return { code, message };
 }
@@ -688,19 +692,34 @@ function vLesson(){
 
   let embedSrc = null;
   const common = 'rel=0&modestbranding=1&enablejsapi=1&origin=' + encodeURIComponent(location.origin) + (lesson.at ? '&start='+Math.floor(lesson.at) : '');
-  if (vid) embedSrc = 'https://www.youtube-nocookie.com/embed/' + vid + '?' + common;
-  else if (src.type === 'playlist' && listId) embedSrc = 'https://www.youtube-nocookie.com/embed/videoseries?list=' + encodeURIComponent(listId) + '&index=' + (lesson.index||1) + '&' + common;
+  const embedBase = 'https://www.youtube.com/embed';
+  if (vid) embedSrc = embedBase + '/' + vid + '?' + common;
+  else if (src.type === 'playlist' && listId) embedSrc = embedBase + '/videoseries?list=' + encodeURIComponent(listId) + '&index=' + (lesson.index||1) + '&' + common;
 
   let watchUrl = null;
   if (vid) watchUrl = 'https://www.youtube.com/watch?v=' + vid;
   else if (src.type === 'playlist' && listId) watchUrl = 'https://www.youtube.com/playlist?list=' + encodeURIComponent(listId);
 
   let stage;
-  if (embedSrc){
-    stage = '<div class="stage"><iframe id="ytframe" allow="autoplay; encrypted-media; picture-in-picture" allowfullscreen referrerpolicy="strict-origin-when-cross-origin" src="'+esc(embedSrc)+'"></iframe></div>'
+  if ((vid || (src.type === 'playlist' && listId)) && false){
+    stage = '<div class="stage"><iframe id="ytframe" allow="autoplay; encrypted-media; picture-in-picture" allowfullscreen referrerpolicy="strict-origin-when-cross-origin" src="'+esc(embedSrc)+'" onerror="this.style.display=\'none\'; var note=this.parentNode.parentNode.querySelector(\'#playnote\'); if(note){ note.classList.add(\'error\'); var txt=note.querySelector(\'span\'); if(txt){ txt.textContent=\'This video cannot be embedded in the current browser or network. Open it on YouTube instead.\'; } }"></iframe></div>'
       + '<div class="playnote" id="playnote"><span>Blank player or a connection error? Some preview frames and networks block embedded video.</span>'
       + '<a href="'+esc(watchUrl)+'" target="_blank" rel="noopener">Open lesson ' + (lesson.index||1) + ' on YouTube</a>'
       + '<span class="dim">Practice, the timestamp box and everything else on this page keep working.</span></div>';
+  } else if (vid || (src.type === 'playlist' && listId)){
+    const thumb = vid ? 'https://img.youtube.com/vi/' + vid + '/hqdefault.jpg' : 'https://img.youtube.com/vi/' + ytVideoId(src.url || '') + '/hqdefault.jpg';
+    stage = '<div class="stage" style="display:flex;align-items:center;justify-content:center;padding:18px;background:linear-gradient(180deg, rgba(15,23,42,0.02), rgba(15,23,42,0.08));">'
+      + '<div style="width:min(100%, 760px); background:var(--sheet); border:1px solid var(--rule); border-radius:16px; overflow:hidden; box-shadow:0 12px 28px rgba(15,23,42,0.08);">'
+      + '<img src="'+esc(thumb || '')+'" alt="'+esc(lesson.title)+'" style="display:block;width:100%;height:auto;max-height:420px;object-fit:cover;filter:saturate(.9);">'
+      + '<div style="padding:18px 20px 20px;">'
+      + '<div class="pill">Video unavailable in this browser</div>'
+      + '<h3 style="margin:10px 0 8px;">'+esc(lesson.title)+'</h3>'
+      + '<p class="muted" style="margin:0 0 14px;">Your browser or network is blocking YouTube embeds. Open the video directly on YouTube to continue learning.</p>'
+      + '<a class="btn" href="'+esc(watchUrl)+'" target="_blank" rel="noopener" style="display:inline-block;">Open lesson ' + (lesson.index||1) + ' on YouTube</a>'
+      + '</div></div></div>'
+      + '<div class="playnote" id="playnote"><span>The embedded player is blocked here, so this lesson opens directly on YouTube instead.</span>'
+      + '<a href="'+esc(watchUrl)+'" target="_blank" rel="noopener">Open lesson ' + (lesson.index||1) + ' on YouTube</a>'
+      + '<span class="dim">Practice, the timestamp box and everything else on this page still work normally.</span></div>';
   } else if (src.type === 'pdf'){
     stage = '<div class="stage" style="background:var(--sheet);aspect-ratio:auto;min-height:280px;overflow-y:auto;padding:22px">'
       + '<h3 style="font-family:var(--serif)">'+esc(lesson.title)+'</h3>'
